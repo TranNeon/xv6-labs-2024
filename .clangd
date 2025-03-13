@@ -1,0 +1,4 @@
+CompileFlags: # Tweak the parse settings
+    Add: 
+        -I=[${workspaceFolder}/**]
+        -I=[/home/Neonesta/dev/xv6-labs-2024/]

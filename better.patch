@@ -1,0 +1,289 @@
+diff --git a/Makefile b/Makefile
+index 74e454f..8944f89 100644
+--- a/Makefile
++++ b/Makefile
+@@ -178,6 +178,7 @@ mkfs/mkfs: mkfs/mkfs.c $K/fs.h $K/param.h
+ .PRECIOUS: %.o
+ 
+ UPROGS=\
++	$U/_trace\
+ 	$U/_cat\
+ 	$U/_echo\
+ 	$U/_forktest\
+diff --git a/kernel/exec.c b/kernel/exec.c
+index 6d7c452..35d1420 100644
+--- a/kernel/exec.c
++++ b/kernel/exec.c
+@@ -164,3 +164,4 @@ loadseg(pagetable_t pagetable, uint64 va, struct inode *ip, uint offset, uint sz
+   
+   return 0;
+ }
++
+diff --git a/kernel/proc.c b/kernel/proc.c
+index 130d9ce..3978df9 100644
+--- a/kernel/proc.c
++++ b/kernel/proc.c
+@@ -169,6 +169,8 @@ freeproc(struct proc *p)
+   p->killed = 0;
+   p->xstate = 0;
+   p->state = UNUSED;
++  // trace
++p->trace_mask = 0;
+ }
+ 
+ // Create a user page table for a given process, with no user memory,
+@@ -279,15 +281,15 @@ growproc(int n)
+ int
+ fork(void)
+ {
++
+   int i, pid;
+   struct proc *np;
+   struct proc *p = myproc();
+-
+   // Allocate process.
+   if((np = allocproc()) == 0){
+     return -1;
+   }
+-
++  np->trace_mask = p->trace_mask;
+   // Copy user memory from parent to child.
+   if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0){
+     freeproc(np);
+@@ -320,8 +322,9 @@ fork(void)
+ 
+   acquire(&np->lock);
+   np->state = RUNNABLE;
++  np->trace_mask = p->trace_mask;
+   release(&np->lock);
+-
++  
+   return pid;
+ }
+ 
+@@ -693,3 +696,4 @@ procdump(void)
+     printf("\n");
+   }
+ }
++
+diff --git a/kernel/proc.h b/kernel/proc.h
+index d021857..2c385ce 100644
+--- a/kernel/proc.h
++++ b/kernel/proc.h
+@@ -84,7 +84,6 @@ enum procstate { UNUSED, USED, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
+ // Per-process state
+ struct proc {
+   struct spinlock lock;
+-
+   // p->lock must be held when using these:
+   enum procstate state;        // Process state
+   void *chan;                  // If non-zero, sleeping on chan
+@@ -104,4 +103,5 @@ struct proc {
+   struct file *ofile[NOFILE];  // Open files
+   struct inode *cwd;           // Current directory
+   char name[16];               // Process name (debugging)
++  int trace_mask;
+ };
+diff --git a/kernel/syscall.c b/kernel/syscall.c
+index ed65409..2a68dc0 100644
+--- a/kernel/syscall.c
++++ b/kernel/syscall.c
+@@ -6,7 +6,7 @@
+ #include "proc.h"
+ #include "syscall.h"
+ #include "defs.h"
+-
++extern uint64 sys_trace(void);
+ // Fetch the uint64 at addr from the current process.
+ int
+ fetchaddr(uint64 addr, uint64 *ip)
+@@ -18,7 +18,11 @@ fetchaddr(uint64 addr, uint64 *ip)
+     return -1;
+   return 0;
+ }
+-
++static char *syscall_names[] = {
++"", "exit", "wait", "pipe", "read", "kill", "exec","fstat", "chdir","dup",
++"getpid","sbrk","sleep","uptime","open","write","mknod","unlink","link","mkdir",
++"close","trace"
++};
+ // Fetch the nul-terminated string at addr from the current process.
+ // Returns length of string, not including nul, or -1 for error.
+ int
+@@ -101,7 +105,7 @@ extern uint64 sys_unlink(void);
+ extern uint64 sys_link(void);
+ extern uint64 sys_mkdir(void);
+ extern uint64 sys_close(void);
+-
++extern uint64 sys_trace(void);
+ // An array mapping syscall numbers from syscall.h
+ // to the function that handles the system call.
+ static uint64 (*syscalls[])(void) = {
+@@ -126,8 +130,10 @@ static uint64 (*syscalls[])(void) = {
+ [SYS_link]    sys_link,
+ [SYS_mkdir]   sys_mkdir,
+ [SYS_close]   sys_close,
++[SYS_trace]   sys_trace,
+ };
+ 
++
+ void
+ syscall(void)
+ {
+@@ -136,9 +142,11 @@ syscall(void)
+ 
+   num = p->trapframe->a7;
+   if(num > 0 && num < NELEM(syscalls) && syscalls[num]) {
+-    // Use num to lookup the system call function for num, call it,
+-    // and store its return value in p->trapframe->a0
+     p->trapframe->a0 = syscalls[num]();
++
++    if (p->trace_mask & (1 << num)) {
++      printf("%d: syscall %s -> %lu\n", p->pid, syscall_names[num], p->trapframe->a0);
++    }
+   } else {
+     printf("%d %s: unknown sys call %d\n",
+             p->pid, p->name, num);
+diff --git a/kernel/syscall.h b/kernel/syscall.h
+index bc5f356..0fb07ff 100644
+--- a/kernel/syscall.h
++++ b/kernel/syscall.h
+@@ -20,3 +20,5 @@
+ #define SYS_link   19
+ #define SYS_mkdir  20
+ #define SYS_close  21
++#define SYS_trace  22
++
+diff --git a/kernel/sysproc.c b/kernel/sysproc.c
+index 3b4d5bd..59a8bd5 100644
+--- a/kernel/sysproc.c
++++ b/kernel/sysproc.c
+@@ -5,6 +5,7 @@
+ #include "memlayout.h"
+ #include "spinlock.h"
+ #include "proc.h"
++#include "syscall.h"
+ 
+ uint64
+ sys_exit(void)
+@@ -91,3 +92,17 @@ sys_uptime(void)
+   release(&tickslock);
+   return xticks;
+ }
++uint64
++sys_trace()
++{
++  int mask;
++
++  argint(0, &mask);
++      
++
++  struct proc *pro = myproc();
++  printf("trace pid: %d\n", pro->pid);
++  pro->trace_mask = mask;
++
++  return 0;
++} 
+diff --git a/user/stat.h b/user/stat.h
+new file mode 100644
+index 0000000..19543af
+--- /dev/null
++++ b/user/stat.h
+@@ -0,0 +1,11 @@
++#define T_DIR     1   // Directory
++#define T_FILE    2   // File
++#define T_DEVICE  3   // Device
++
++struct stat {
++  int dev;     // File system's disk device
++  uint ino;    // Inode number
++  short type;  // Type of file
++  short nlink; // Number of links to file
++  uint64 size; // Size of file in bytes
++};
+diff --git a/user/trace.c b/user/trace.c
+index 474b26c..09910cf 100644
+--- a/user/trace.c
++++ b/user/trace.c
+@@ -1,29 +1,18 @@
+-#include "kernel/param.h"
+-#include "kernel/types.h"
++#include "types.h"
+ #include "kernel/stat.h"
+ #include "user/user.h"
+ 
+-int
+-main(int argc, char *argv[])
+-{
+-  int i;
+-  char *nargv[MAXARG];
+-
+-  if(argc < 3 || (argv[1][0] < '0' || argv[1][0] > '9')){
+-    fprintf(2, "Usage: %s mask command\n", argv[0]);
+-    exit(1);
+-  }
+-
+-  if (trace(atoi(argv[1])) < 0) {
+-    fprintf(2, "%s: trace failed\n", argv[0]);
+-    exit(1);
+-  }
+-  
+-  for(i = 2; i < argc && i < MAXARG; i++){
+-    nargv[i-2] = argv[i];
+-  }
+-  nargv[argc-2] = 0;
+-  exec(nargv[0], nargv);
+-  printf("trace: exec failed\n");
+-  exit(0);
++int main(int argc, char *argv[]){
++ 	if (argc<3){
++	fprintf(2, "Usage: trace mask command [args...]\n");
++	exit(1);
++}
++  int mask = atoi(argv[1]);
++  if (trace(mask)< 0){
++	fprintf(2, "trace : failed to enable tracing\n");
++	exit(1);
++}
++  exec(argv[2], &argv[2]);
++  fprintf(2, "trace: exec failed\n");
++  exit(1);
+ }
+diff --git a/user/types.h b/user/types.h
+new file mode 100644
+index 0000000..ee73164
+--- /dev/null
++++ b/user/types.h
+@@ -0,0 +1,10 @@
++typedef unsigned int   uint;
++typedef unsigned short ushort;
++typedef unsigned char  uchar;
++
++typedef unsigned char uint8;
++typedef unsigned short uint16;
++typedef unsigned int  uint32;
++typedef unsigned long uint64;
++
++typedef uint64 pde_t;
+diff --git a/user/user.h b/user/user.h
+index f16fe27..e5ff959 100644
+--- a/user/user.h
++++ b/user/user.h
+@@ -22,6 +22,7 @@ int getpid(void);
+ char* sbrk(int);
+ int sleep(int);
+ int uptime(void);
++int trace(int mask); 
+ 
+ // ulib.c
+ int stat(const char*, struct stat*);
+diff --git a/user/usys.pl b/user/usys.pl
+index 01e426e..afb754e 100755
+--- a/user/usys.pl
++++ b/user/usys.pl
+@@ -36,3 +36,5 @@ entry("getpid");
+ entry("sbrk");
+ entry("sleep");
+ entry("uptime");
++entry("trace");
++

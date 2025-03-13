@@ -141,13 +141,26 @@ void testbad() {
   }
 }
 
-int
-main(int argc, char *argv[])
-{
-  printf("sysinfotest: start\n");
-  testcall();
-  testmem();
-  testproc();
-  printf("sysinfotest: OK\n");
-  exit(0);
+
+//have fun using this any where else
+// int
+// main(int argc, char *argv[])
+// {
+//   printf("sysinfotest: start\n");
+//   testcall();
+//   testmem();
+//   testproc();
+//   printf("sysinfotest: OK\n");
+//   exit(0);
+// }
+
+
+int main(void) {
+    struct sysinfo info;
+    if (sysinfo(&info) < 0) {
+        printf("sysinfo failed\n");
+        exit(1);
+    }
+    printf("free: %ld, nproc: %ld, files: %d\n", info.freemem, info.nproc, info.nopenfiles);
+    exit(0);
 }
