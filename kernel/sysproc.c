@@ -95,7 +95,7 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
-<<<<<<< HEAD
+
 uint64
 sys_trace()
 {
@@ -110,7 +110,6 @@ sys_trace()
 
   return 0;
 } 
-=======
 
 uint64 sys_sysinfo(void) {
     struct sysinfo info;
@@ -124,4 +123,3 @@ uint64 sys_sysinfo(void) {
     if (copyout(myproc()->pagetable, addr, (char*)&info, sizeof(info)) < 0) return -1;
     return 0;
 }
->>>>>>> 126f408 (sysinfo)

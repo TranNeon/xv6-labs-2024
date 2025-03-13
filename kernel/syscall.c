@@ -19,10 +19,12 @@ fetchaddr(uint64 addr, uint64 *ip)
   return 0;
 }
 static char *syscall_names[] = {
-"", "exit", "wait", "pipe", "read", "kill", "exec","fstat", "chdir","dup",
+"", "fork", "exit", "wait", "pipe", "read", "kill", "exec","fstat", "chdir","dup",
 "getpid","sbrk","sleep","uptime","open","write","mknod","unlink","link","mkdir",
 "close","trace"
 };
+
+
 // Fetch the nul-terminated string at addr from the current process.
 // Returns length of string, not including nul, or -1 for error.
 int
@@ -131,11 +133,8 @@ static uint64 (*syscalls[])(void) = {
 [SYS_link]    sys_link,
 [SYS_mkdir]   sys_mkdir,
 [SYS_close]   sys_close,
-<<<<<<< HEAD
 [SYS_trace]   sys_trace,
-=======
 [SYS_sysinfo] sys_sysinfo,
->>>>>>> 126f408 (sysinfo)
 };
 
 
