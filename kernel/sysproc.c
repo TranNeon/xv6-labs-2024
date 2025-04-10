@@ -134,7 +134,7 @@ argint(1, &n);
 argaddr(2, &user_dst);
 
 
-  if (n < 0 || n > 32)  
+  if (n < 0)  
     return -1;
 
   uint8 mask = 0;
