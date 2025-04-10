@@ -267,6 +267,9 @@ UPROGS += \
 	$U/_nettest
 endif
 
+UPROGS += \
+	$U/_pgaccess_test\
+
 UEXTRA=
 ifeq ($(LAB),util)
 	UEXTRA += user/xargstest.sh
